@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <algorithm>
 
 // Характеристики конкретного материала
 struct Material
@@ -36,6 +37,14 @@ struct FinishZone
 	Material material;
 };
 
+// Варианты края стены
+enum class CornerType
+{
+    None,   // Нет угла ИЛИ угол не 90 градусов, т.к. угловой профиль может использоваться только для прямого угла между стенами
+    Inner,  // Внутренний угол
+    Outer   // Внешний угол
+};
+
 // Стена класс, потому что содержит логику работы с ней
 class Wall
 {
@@ -45,6 +54,9 @@ private:
 	int Wall_Height;	// Высота стены
 
 	std::vector<FinishZone> Wall_Finish_Zones;	// Список зон отделки на конкретной стене
+
+    // Каким типом угла эта стена стыкуется со СЛЕДУЮЩЕЙ стеной
+    CornerType Next_Corner_Type = CornerType::None;
 
 public:
 	// Конструктор создания новой стены
@@ -93,16 +105,22 @@ public:
 	}
 
 	// Геттер для получения всех зон отделки на стене
-	const std::vector<FinishZone>& getFinishZones() const
-	{
-		return Wall_Finish_Zones;
-	}
+	const std::vector<FinishZone>& getFinishZones() const	{ return Wall_Finish_Zones;	}
 
 	// Геттер для получения ID стены
-	int getID() const
-	{
-		return Wall_ID;
-	}
+	int getID() const	{ return Wall_ID; }
+
+    // Сеттер для установки типа угла
+    void SetNextCornerType(CornerType type) 
+    {
+        Next_Corner_Type = type;
+    }
+
+    // Геттер для типа угла
+    CornerType getNextCornerType() const { return Next_Corner_Type; }
+
+    // Геттер для высоты стены
+    int getHeight() const { return Wall_Height; }
 };
 
 // Структура обрезка не содержит поля Material, т.к. расчет происходит по очереди для каждого материала
@@ -120,6 +138,32 @@ struct Material_Calculation_Result
 	int ones_used = 0;				// Количество использованного материала, шт.
 	std::vector<Scrap> scraps;		// Список оставшихся обрезков
 };
+
+
+
+enum class ProfileType
+{
+    Edge,         // Торцевой
+    Connecting,   // Соединительный
+    InnerCorner,  // Угловой внутренний
+    OuterCorner   // Угловой внешний
+};
+
+struct ProfileMaterial
+{
+    std::string name;
+    int length;
+    ProfileType type;
+    bool has_LED; // Флаг наличия подсветки (например, светодиодный профиль)
+
+    bool operator<(const ProfileMaterial& other) const
+    {
+        return name < other.name;
+    }
+};
+
+
+
 
 
 class MaterialCalculator 
@@ -230,6 +274,56 @@ private:
         return result;
     }
 
+    // Универсальный математический движок (1D-раскрой), который считает ШТУКИ из отрезков.
+    // Ему всё равно, какой это профиль — угловой или торцевой. Он просто режет хлысты.
+    int Calculate1DMinPieces(const std::vector<int>& required_cuts, int profile_length) 
+    {
+        if (required_cuts.empty()) return 0;
+
+        std::vector<int> sorted_cuts = required_cuts;
+        std::sort(sorted_cuts.begin(), sorted_cuts.end(), std::greater<int>());
+
+        int pieces_used = 0;
+        std::vector<int> scraps;
+        int min_useful_length = profile_length / 3; // 1/3 от хлыста
+
+        for (int cut : sorted_cuts)
+        {
+            while (cut > profile_length) 
+            {
+                pieces_used++;
+                cut -= profile_length;
+            }
+
+            bool found = false;
+            for (size_t i = 0; i < scraps.size(); ++i) 
+            {
+                if (scraps[i] >= cut) 
+                {
+                    scraps[i] -= cut;
+                    if (scraps[i] < min_useful_length) 
+                    {
+                        scraps.erase(scraps.begin() + i);
+                    }
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) 
+            {
+                pieces_used++;
+                int rem = profile_length - cut;
+                if (rem >= min_useful_length) 
+                {
+                    scraps.push_back(rem);
+                }
+            }
+        }
+        return pieces_used;
+    }
+
+
 public:
     // Главный публичный метод. Принимает список всех стен помещения.
     std::vector<Material_Calculation_Result> CalculateAllWalls(const std::vector<Wall>& room_walls) 
@@ -263,30 +357,111 @@ public:
         // Возвращаем собранный массив результатов в функцию main или в будущий GUI
         return final_results;
     }
+
+    // Единый публичный метод для расчета КОНКРЕТНОГО профиля.
+    // Он принимает профиль, список стен и вектор внутренних швов, которые накопились при расчете панелей.
+    Material_Calculation_Result CalculateProfile(const ProfileMaterial& profile,
+        const std::vector<Wall>& room_walls,
+        const std::vector<int>& internal_panel_seams) 
+    {
+        Material_Calculation_Result result;
+        result.material_name = profile.name + (profile.has_LED ? " (с подсветкой)" : "");
+
+        std::vector<int> required_cuts;
+
+        if (profile.type == ProfileType::Edge) 
+        {
+            // Логика торцевого профиля (без изменений)
+            for (const auto& wall : room_walls) 
+            {
+                for (const auto& zone : wall.getFinishZones()) 
+                {
+                    required_cuts.push_back(zone.width);
+                    required_cuts.push_back(zone.width);
+                    required_cuts.push_back(zone.height);
+                    required_cuts.push_back(zone.height);
+                }
+            }
+        }
+        else if (profile.type == ProfileType::Connecting) 
+        {
+            // Логика соединительного профиля (без изменений)
+            required_cuts = internal_panel_seams;
+        }
+        else if (profile.type == ProfileType::InnerCorner) 
+        {
+            // Собираем высоты только тех стыков стен, которые помечены как ВНУТРЕННИЕ
+            for (const auto& wall : room_walls) 
+            {
+                if (wall.getNextCornerType() == CornerType::Inner)
+                {
+                    required_cuts.push_back(wall.getHeight());
+                }
+            }
+        }
+        else if (profile.type == ProfileType::OuterCorner) 
+        {
+            // Собираем высоты только тех стыков стен, которые помечены как ВНЕШНИЕ
+            for (const auto& wall : room_walls) 
+            {
+                if (wall.getNextCornerType() == CornerType::Outer) 
+                {
+                    required_cuts.push_back(wall.getHeight());
+                }
+            }
+        }
+
+        // Передаем собранные отрезки в единый математический движок
+        result.ones_used = Calculate1DMinPieces(required_cuts, profile.length);
+
+        return result;
+    }
 };
 
 
-// 4. КОНСОЛЬНЫЙ ИНТЕРФЕЙС (MAIN)
 
-int main() {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 4. КОНСОЛЬНЫЙ ИНТЕРФЕЙС (MAIN)
+int main() 
+{
     setlocale(LC_ALL, "ru");
 
-    // Инициализируем несколько материалов по умолчанию
-    std::vector<Material> materials_db = 
-    {
+    // База материалов панелей по умолчанию
+    std::vector<Material> materials_db = {
         {"Панель (2800x1220, поворотный)", 1220, 2800, true},
         {"Рейка (3000x100, НЕ поворотная)", 100, 3000, false}
+    };
+
+    // База доступных профилей по умолчанию (для демонстрации в калькуляторе)
+    std::vector<ProfileMaterial> profiles_db = {
+        {"Торцевой П-профиль (3000мм)", 3000, ProfileType::Edge, false},
+        {"Соединительный Н-профиль (3000мм)", 3000, ProfileType::Connecting, false},
+        {"Угловой внутренний профиль (3000мм)", 3000, ProfileType::InnerCorner, false},
+        {"Угловой внешний профиль (3000мм)", 3000, ProfileType::OuterCorner, false}
     };
 
     std::vector<Wall> room_walls;
     int wall_counter = 1;
 
     std::cout << "==================================================\n";
-    std::cout << " Программа расчета листовых материалов для стен\n";
+    std::cout << " Программа расчета листовых материалов и профилей\n";
     std::cout << "==================================================\n\n";
 
-    while (true) 
-    {
+    while (true) {
         int wall_w, wall_h;
         std::cout << "--- Создание Стены [" << wall_counter << "] ---\n";
         std::cout << "Введите ширину стены в мм (или 0 для завершения ввода): ";
@@ -295,8 +470,7 @@ int main() {
 
         std::cout << "Введите высоту стены в мм: ";
         std::cin >> wall_h;
-        if (wall_h <= 0) 
-        {
+        if (wall_h <= 0) {
             std::cout << "[Ошибка] Высота должна быть больше 0. Попробуйте снова.\n";
             continue;
         }
@@ -305,12 +479,10 @@ int main() {
         std::cout << "[Успех] Создана стена " << wall_w << "x" << wall_h << " мм.\n\n";
 
         // Цикл добавления зон отделки на текущую стену
-        while (true) 
-        {
+        while (true) {
             std::cout << "  Добавление зоны отделки для Стены №" << wall_counter << "\n";
             std::cout << "  Доступные материалы:\n";
-            for (size_t i = 0; i < materials_db.size(); ++i) 
-            {
+            for (size_t i = 0; i < materials_db.size(); ++i) {
                 std::cout << "    " << i + 1 << ". " << materials_db[i].name
                     << " [" << materials_db[i].width << "x" << materials_db[i].height << " мм]\n";
             }
@@ -329,9 +501,29 @@ int main() {
             std::cout << "  Введите ширину зоны (мм): ";               std::cin >> z_w;
             std::cout << "  Введите высоту зоны (мм): ";               std::cin >> z_h;
 
-            // Метод сам выполнит все геометрические проверки
             current_wall.AddFinishZone(z_x, z_y, z_w, z_h, selected_mat);
             std::cout << "\n";
+        }
+
+        // --- НОВЫЙ БЛОК: Определение стыков и углов для профилей ---
+        std::cout << "  --- Настройка стыка в конце Стены №" << wall_counter << " ---\n";
+        std::cout << "  Как эта стена стыкуется со следующей?\n";
+        std::cout << "    1. Образует ВНУТРЕННИЙ угол 90 градусов\n";
+        std::cout << "    2. Образует ВНЕШНИЙ угол 90 градусов\n";
+        std::cout << "    3. Не образует угол 90 градусов (или открытый торец, будет торцевой профиль)\n";
+        std::cout << "  Ваш выбор: ";
+        int corner_choice;
+        std::cin >> corner_choice;
+
+        if (corner_choice == 1) {
+            current_wall.SetNextCornerType(CornerType::Inner);
+        }
+        else if (corner_choice == 2) {
+            current_wall.SetNextCornerType(CornerType::Outer);
+        }
+        else {
+            current_wall.SetNextCornerType(CornerType::None);
+            std::cout << "  [Инфо] Торец стены будет автоматически закрыт торцевым профилем.\n";
         }
 
         room_walls.push_back(current_wall);
@@ -339,38 +531,66 @@ int main() {
         std::cout << "==================================================\n\n";
     }
 
-    // Если пользователь ввёл хотя бы одну стену — запускаем расчёт
+    // Обработка логики замыкания помещения
     if (!room_walls.empty()) {
-        MaterialCalculator calculator;
-        std::vector<Material_Calculation_Result> results = calculator.CalculateAllWalls(room_walls);
+        std::cout << "==================================================\n";
+        std::cout << "Образуют ли ПЕРВАЯ и ПОСЛЕДНЯЯ стены угол 90 градусов (замкнутая комната)?\n";
+        std::cout << "  1. Да, образуют ВНУТРЕННИЙ угол\n";
+        std::cout << "  2. Да, образуют ВНЕШНИЙ угол\n";
+        std::cout << "  3. Нет, это разомкнутый контур стен\n";
+        std::cout << "Ваш выбор: ";
+        int final_loop_choice;
+        std::cin >> final_loop_choice;
 
+        if (final_loop_choice == 1) {
+            room_walls.back().SetNextCornerType(CornerType::Inner);
+        }
+        else if (final_loop_choice == 2) {
+            room_walls.back().SetNextCornerType(CornerType::Outer);
+        }
+        else {
+            // Если комната не замкнута, то:
+            // 1. Правый торец последней стены остаётся открытым (CornerType::None уже стоит по умолчанию)
+            // 2. Левый торец самой первой стены тоже открыт и потребует торцевого профиля.
+            std::cout << "  [Инфо] Крайние торцы первой и последней стен будут закрыты торцевым профилем.\n";
+        }
+
+        // Запуск глобального расчета
+        MaterialCalculator calculator;
+
+        // Вектор-заглушка для внутренних швов панелей (наполним его на следующем шаге)
+        std::vector<int> dummy_internal_seams;
+
+        // 1. Считаем листовые панели
+        std::vector<Material_Calculation_Result> panel_results = calculator.CalculateAllWalls(room_walls);
+
+        // 2. Считаем по очереди каждый тип профиля из нашей базы данных
+        std::vector<Material_Calculation_Result> profile_results;
+        for (const auto& profile : profiles_db) {
+            Material_Calculation_Result prof_res = calculator.CalculateProfile(profile, room_walls, dummy_internal_seams);
+            profile_results.push_back(prof_res);
+        }
+
+        // ВЫВОД РЕЗУЛЬТАТОВ
         std::cout << "\n==================================================\n";
         std::cout << "             ИТОГОВЫЙ РАСЧЕТ РАСКРОЯ              \n";
         std::cout << "==================================================\n";
 
-        for (const auto& res : results) 
-        {
-            std::cout << "\nМатериал: " << res.material_name << "\n";
-            std::cout << " -> Требуется целых единиц: " << res.ones_used << " шт.\n";
-            std::cout << " -> Оставшиеся обрезки на складе (" << res.scraps.size() << " шт.):\n";
+        std::cout << "\n[1] ЛИСТОВЫЕ МАТЕРИАЛЫ ДЛЯ ОТДЕЛКИ:\n";
+        for (const auto& res : panel_results) {
+            std::cout << "  Материал: " << res.material_name << " -> " << res.ones_used << " шт.\n";
+        }
 
-            if (res.scraps.empty()) 
-            {
-                std::cout << "    [Без отходов]\n";
-            }
-            else 
-            {
-                for (const auto& scrap : res.scraps) 
-                {
-                    std::cout << "    - " << scrap.width << " x " << scrap.height << " мм\n";
-                }
-            }
+        std::cout << "\n[2] ПОГОНАЖНЫЕ ПРОФИЛИ И КРЕПЕЖ:\n";
+        for (const auto& res : profile_results) {
+            std::cout << "  Профиль: " << res.material_name << " -> " << res.ones_used << " шт. (хлыстов)\n";
         }
         std::cout << "==================================================\n";
-    } 
-    else 
-    {
+
+    }
+    else {
         std::cout << "Расчет отменен. Ни одной стены не было добавлено.\n";
     }
+
     return 0;
 }
