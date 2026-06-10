@@ -131,6 +131,7 @@
     <ClCompile Include="test_program.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="DataLoader.h" />
     <ClInclude Include="MaterialCalculator.h" />
     <ClInclude Include="Structures.h" />
     <ClInclude Include="Wall.h" />

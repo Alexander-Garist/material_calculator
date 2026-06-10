@@ -3,21 +3,36 @@
 #include "Structures.h"
 #include "Wall.h"
 #include "MaterialCalculator.h"
-
+#include "DataLoader.h"
 int main() {
     setlocale(LC_ALL, "rus");
 
-    std::vector<Material> materials_db = {
-        {"Панель (2800x1220, поворотная)", 1220, 2800, true},
-        {"Рейка (3000x100, НЕ поворотная)", 100, 3000, false}
+    /*std::vector<Material> materials_db = {
+        {"", "Панель (2800x1220, поворотная)", 1220, 2800, true},
+        {"", "Рейка (3000x100, НЕ поворотная)", 100, 3000, false}
     };
 
     std::vector<ProfileMaterial> profiles_db = {
-        {"Торцевой П-профиль (3000мм)", 3000, ProfileType::Edge, false},
-        {"Соединительный Н-профиль (3000мм)", 3000, ProfileType::Connecting, false},
-        {"Угловой внутренний профиль (3000мм)", 3000, ProfileType::InnerCorner, false},
-        {"Угловой внешний профиль (3000мм)", 3000, ProfileType::OuterCorner, false}
-    };
+        {"","Торцевой П-профиль (3000мм)", 3000, ProfileType::Edge, false},
+        {"","Соединительный Н-профиль (3000мм)", 3000, ProfileType::Connecting, false},
+        {"","Угловой внутренний профиль (3000мм)", 3000, ProfileType::InnerCorner, false},
+        {"","Угловой внешний профиль (3000мм)", 3000, ProfileType::OuterCorner, false}
+    };*/
+
+    // Загружаем всё из одного файла, экспортированного из Excel
+    AppDatabase db = DataLoader::LoadUnifiedDatabase("database.csv");
+
+    // Для удобства старого кода можно сделать ссылки:
+    const auto& materials_db = db.materials;
+    const auto& profiles_db = db.profiles;
+
+    if (materials_db.empty() && profiles_db.empty()) 
+    {
+        std::cout << "[Ошибка] База данных пуста! Проверьте файл database.csv\n";
+        return -1;
+    }
+
+
 
     std::vector<Wall> room_walls;
     int wall_counter = 1;

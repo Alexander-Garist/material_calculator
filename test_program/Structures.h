@@ -2,43 +2,52 @@
 #include <string>
 #include <vector>
 
-enum class ProfileType {
+enum class ProfileType 
+{
     Edge,         // Торцевой
     Connecting,   // Соединительный
     InnerCorner,  // Угловой внутренний
     OuterCorner   // Угловой внешний
 };
 
-enum class CornerType {
+enum class CornerType 
+{
     None,
     Inner,
     Outer
 };
 
-struct Material {
-    std::string name;
-    int width;
-    int height;
-    bool can_rotate;
+struct Material 
+{
+    std::string article;    // Уникальный артикул
+    std::string name;       // Название материала
+    int width;              // Ширина материала
+    int height;             // Высота материала
+    bool can_rotate;        // Возможность поворота
 
-    bool operator<(const Material& other) const {
-        return name < other.name;
+    bool operator<(const Material& other) const 
+    {
+        return article < other.article;
     }
 };
 
-struct ProfileMaterial {
-    std::string name;
-    int length;
-    ProfileType type;
-    bool has_light;
+struct ProfileMaterial 
+{
+    std::string article;    // Уникальный артикул
+    std::string name;       // Название профиля
+    int length;             // Длина профиля
+    ProfileType type;       // Тип профиля
+    bool has_light;         // Наличие подсветки
 };
 
-struct Scrap {
+struct Scrap 
+{
     int width;
     int height;
 };
 
-struct FinishZone {
+struct FinishZone 
+{
     int offset_X;
     int offset_Y;
     int width;
@@ -46,7 +55,8 @@ struct FinishZone {
     Material material;
 };
 
-struct Material_Calculation_Result {
+struct Material_Calculation_Result 
+{
     std::string material_name;
     int ones_used = 0;
     std::vector<Scrap> scraps;
